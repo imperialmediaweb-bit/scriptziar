@@ -1,3 +1,5 @@
-https://botosaniexpress.ro
-https://ziar2.ro
-https://ziar3.ro
+# Un site per linie, format: URL|username|parola
+# Exemplu:
+https://botosaniexpress.ro|admin|parola123
+https://ziar2.ro|admin|parola123
+https://ziar3.ro|admin|parola123
