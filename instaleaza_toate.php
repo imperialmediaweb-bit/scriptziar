@@ -5,15 +5,9 @@ $da_host = "https://localhost:2222";
 $da_user = "sellsite";
 $da_pass = "UiyeTD(5O54v[8";
 
-$plugin_code = '<?php
-add_action("wp_head", function() {
-    echo \'<style>img[data-eio-rwidth]+img[data-eio="l"],img.lazyautosizes+img[data-eio="l"],img.lazyloaded+img[data-eio="l"],img+img[data-eio="l"]{display:none!important}</style>\';
-});';
-
 echo "<pre>";
 echo "=== Instalare Fix Poze Duplicate ===\n\n";
 
-// Ia userii
 $r = da_get("/CMD_API_SHOW_USERS");
 preg_match_all('/list\[\]=([^&]+)/', $r, $m);
 $users = array_map('urldecode', $m[1]);
@@ -23,37 +17,42 @@ $ok = 0;
 $fail = 0;
 
 foreach ($users as $usr) {
-    // Ia domeniul
     $cfg = da_get("/CMD_API_SHOW_USER_CONFIG?user=" . urlencode($usr));
     $domain = "";
     if (preg_match('/(?:^|&)domain=([^&]+)/', $cfg, $dm)) {
         $domain = urldecode($dm[1]);
     }
-    if (empty($domain)) {
-        echo "  - {$usr}: niciun domeniu\n";
-        continue;
-    }
+    if (empty($domain)) continue;
 
-    // Creeaza cron job care scrie fisierul (ruleaza ca userul respectiv)
     $mu = "/home/{$usr}/domains/{$domain}/public_html/wp-content/mu-plugins";
-    $esc = addcslashes($plugin_code, "'\\");
-    $cmd = "mkdir -p {$mu} && printf '%s' '{$esc}' > {$mu}/fix-poze-duplicate.php";
+    $file = "{$mu}/fix-poze-duplicate.php";
+
+    // Comanda pe O SINGURA linie, fara newline, fara caractere speciale
+    $cmd = "php -r \"@mkdir('{$mu}',0755,true);file_put_contents('{$file}','<?php add_action(chr(34).chr(119).chr(112).chr(95).chr(104).chr(101).chr(97).chr(100).chr(34),function(){echo chr(60).chr(115).chr(116).chr(121).chr(108).chr(101).chr(62).chr(105).chr(109).chr(103).chr(43).chr(105).chr(109).chr(103).chr(91).chr(100).chr(97).chr(116).chr(97).chr(45).chr(101).chr(105).chr(111).chr(61).chr(34).chr(108).chr(34).chr(93).chr(123).chr(100).chr(105).chr(115).chr(112).chr(108).chr(97).chr(121).chr(58).chr(110).chr(111).chr(110).chr(101).chr(33).chr(105).chr(109).chr(112).chr(111).chr(114).chr(116).chr(97).chr(110).chr(116).chr(125).chr(60).chr(47).chr(115).chr(116).chr(121).chr(108).chr(101).chr(62);});');\"";
+
+    // Asta e prea complicat. Hai mai simplu: cron ruleaza php care creeaza fisierul
+    // Folosim base64 ca sa evitam probleme cu escape
+    $php_content = '<?php add_action("wp_head", function() { echo "<style>img+img[data-eio]{display:none!important}</style>"; });';
+    $b64 = base64_encode($php_content);
+    $cmd = "php -r \"@mkdir('{$mu}',0755,true);file_put_contents('{$file}',base64_decode('{$b64}'));\"";
 
     $result = da_post("/CMD_API_CRON_JOBS", [
         "action" => "create",
-        "minute" => rand(0,59),
-        "hour" => rand(0,23),
-        "dayofmonth" => "*",
-        "month" => "*",
+        "minute" => "0",
+        "hour" => "0",
+        "dayofmonth" => "1",
+        "month" => "1",
         "dayofweek" => "*",
         "command" => $cmd,
     ], "{$da_user}|{$usr}");
 
-    if (strpos($result, "error=0") !== false || strpos($result, "error") === false) {
-        echo "  ✓ {$domain} (cron)\n";
+    if (strpos($result, "error=0") !== false) {
+        echo "  ✓ {$domain}\n";
         $ok++;
     } else {
-        echo "  ✗ {$domain}: " . substr($result, 0, 100) . "\n";
+        // Decoded error
+        $err = urldecode($result);
+        echo "  ✗ {$domain}: " . substr($err, 0, 80) . "\n";
         $fail++;
     }
     flush();
@@ -61,30 +60,43 @@ foreach ($users as $usr) {
 }
 
 echo "\n=== {$ok} cron jobs create, {$fail} erori ===\n";
-echo "\nCron-urile vor rula automat si vor instala fix-ul.\n";
-echo "Dupa cateva ore, acceseaza linkul de mai jos pentru a sterge cron-urile:\n";
-echo "<a href='?cleanup=1'>STERGE CRON-URILE (dupa ce fix-ul e instalat)</a>\n";
-echo "\n⚠ STERGE SI ACEST FISIER DIN FILE MANAGER!\n";
+if ($ok > 0) {
+    echo "\nAcum apasa linkul de mai jos pentru a rula cron-urile ACUM:\n";
+    echo "<a href='?run=1'>▶ RULEAZA ACUM</a>\n";
+}
+echo "\nDupa instalare:\n";
+echo "<a href='?cleanup=1'>STERGE CRON-URILE</a>\n";
+echo "\n⚠ STERGE SI ACEST FISIER!\n";
 echo "</pre>";
+
+// Ruleaza cron-urile acum
+if (isset($_GET['run'])) {
+    echo "<pre>=== Rulare cron-uri ===\n\n";
+    $r = da_get("/CMD_API_SHOW_USERS");
+    preg_match_all('/list\[\]=([^&]+)/', $r, $m);
+    foreach ($m[1] as $usr) {
+        $usr = urldecode($usr);
+        da_post("/CMD_API_CRON_JOBS", ["action" => "force"], "{$da_user}|{$usr}");
+        echo "  {$usr}: fortat\n";
+        flush();
+    }
+    echo "\nGata! Verifica acum pe site-uri.\n";
+    echo "<a href='?cleanup=1'>STERGE CRON-URILE</a>\n</pre>";
+    exit;
+}
 
 // Cleanup
 if (isset($_GET['cleanup'])) {
-    echo "<pre>\n=== Stergere cron-uri ===\n\n";
+    echo "<pre>=== Stergere cron-uri ===\n\n";
     $r = da_get("/CMD_API_SHOW_USERS");
     preg_match_all('/list\[\]=([^&]+)/', $r, $m);
     foreach ($m[1] as $usr) {
         $usr = urldecode($usr);
         $crons = da_get("/CMD_API_CRON_JOBS", "{$da_user}|{$usr}");
-        // Gaseste ID-urile cron-urilor cu mu-plugins
-        preg_match_all('/(\d+)=/', $crons, $ids);
-        $lines = explode("&", $crons);
-        foreach ($lines as $line) {
-            if (strpos($line, "mu-plugins") !== false && preg_match('/^(\d+)=/', $line, $id)) {
-                da_post("/CMD_API_CRON_JOBS", [
-                    "action" => "delete",
-                    "select0" => $id[1],
-                ], "{$da_user}|{$usr}");
-                echo "  {$usr}: sters cron #{$id[1]}\n";
+        if (preg_match_all('/(\d+)=[^&]*mu-plugins/', $crons, $ids)) {
+            foreach ($ids[1] as $id) {
+                da_post("/CMD_API_CRON_JOBS", ["action" => "delete", "select0" => $id], "{$da_user}|{$usr}");
+                echo "  {$usr}: sters #{$id}\n";
             }
         }
         flush();
@@ -93,34 +105,15 @@ if (isset($_GET['cleanup'])) {
     exit;
 }
 
-function da_get($path, $auth_user = null) {
+function da_get($path, $auth = null) {
     global $da_host, $da_user, $da_pass;
     $ch = curl_init($da_host . $path);
-    curl_setopt_array($ch, [
-        CURLOPT_USERPWD => ($auth_user ?: $da_user) . ":" . $da_pass,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_SSL_VERIFYHOST => false,
-        CURLOPT_TIMEOUT => 30,
-    ]);
-    $r = curl_exec($ch);
-    curl_close($ch);
-    return $r ?: "";
+    curl_setopt_array($ch, [CURLOPT_USERPWD => ($auth ?: $da_user) . ":" . $da_pass, CURLOPT_RETURNTRANSFER => true, CURLOPT_SSL_VERIFYPEER => false, CURLOPT_SSL_VERIFYHOST => false, CURLOPT_TIMEOUT => 30]);
+    $r = curl_exec($ch); curl_close($ch); return $r ?: "";
 }
-
-function da_post($path, $data, $auth_user = null) {
+function da_post($path, $data, $auth = null) {
     global $da_host, $da_user, $da_pass;
     $ch = curl_init($da_host . $path);
-    curl_setopt_array($ch, [
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => http_build_query($data),
-        CURLOPT_USERPWD => ($auth_user ?: $da_user) . ":" . $da_pass,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_SSL_VERIFYHOST => false,
-        CURLOPT_TIMEOUT => 30,
-    ]);
-    $r = curl_exec($ch);
-    curl_close($ch);
-    return $r ?: "";
+    curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => http_build_query($data), CURLOPT_USERPWD => ($auth ?: $da_user) . ":" . $da_pass, CURLOPT_RETURNTRANSFER => true, CURLOPT_SSL_VERIFYPEER => false, CURLOPT_SSL_VERIFYHOST => false, CURLOPT_TIMEOUT => 30]);
+    $r = curl_exec($ch); curl_close($ch); return $r ?: "";
 }
