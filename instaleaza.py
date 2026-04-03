@@ -197,9 +197,13 @@ def main():
 
     print("=== Instalare Fix Poze Duplicate pe toate site-urile ===\n")
 
-    host = input("URL DirectAdmin (ex: https://web7.gazduire.net:2222): ").strip().rstrip("/")
-    username = input("Username reseller: ").strip()
-    password = input("Parola: ").strip()
+    # Datele DirectAdmin - modifică aici dacă e nevoie
+    host = "https://web7.gazduire.net:2222"
+    username = "sellsite"
+    password = "UiyeTD(5O54v[8"
+
+    print(f"Server: {host}")
+    print(f"User: {username}\n")
 
     print("\nIau lista de useri...")
     users = get_users(host, username, password)
