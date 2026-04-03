@@ -1,14 +1,8 @@
 <?php
 /**
- * Pune fix-ul pe site-ul CURENT.
- * Uploadează pe fiecare site prin File Manager și accesează în browser.
- * După: sterge acest fisier.
+ * Instalează fix-ul pentru poze duplicate pe TOATE site-urile de pe server.
+ * Uploadează pe UN SINGUR site și accesează în browser.
  */
-
-$mu_dir = __DIR__ . '/wp-content/mu-plugins';
-if (!is_dir($mu_dir)) {
-    mkdir($mu_dir, 0755, true);
-}
 
 $plugin = '<?php
 /*
@@ -28,17 +22,53 @@ add_action("wp_head", function() {
 });
 ';
 
-$result = file_put_contents($mu_dir . '/fix-poze-duplicate.php', $plugin);
-
 echo "<pre>";
-if ($result !== false) {
-    echo "✓ Fix instalat pe: " . $_SERVER['HTTP_HOST'] . "\n";
-    echo "Fisier: " . $mu_dir . "/fix-poze-duplicate.php\n";
-    echo "Bytes: " . $result . "\n";
-} else {
-    echo "✗ EROARE: Nu am putut scrie fisierul!\n";
-    echo "Director: " . $mu_dir . "\n";
-    echo "Exista: " . (is_dir($mu_dir) ? "DA" : "NU") . "\n";
+echo "=== Instalare Fix Poze Duplicate ===\n\n";
+
+$count = 0;
+
+// Cauta TOATE instalările WordPress pe server
+$patterns = [
+    '/home/*/domains/*/public_html/wp-config.php',
+];
+
+$configs = [];
+foreach ($patterns as $p) {
+    $found = glob($p);
+    if ($found) $configs = array_merge($configs, $found);
 }
-echo "\n⚠ STERGE ACEST FISIER (instaleaza_fix.php) DUPA INSTALARE!\n";
+
+if (empty($configs)) {
+    echo "Nu am gasit site-uri WordPress.\n";
+    echo "Cale curenta: " . __DIR__ . "\n";
+} else {
+    echo "Gasite " . count($configs) . " site-uri WordPress.\n\n";
+
+    foreach ($configs as $wpconfig) {
+        $wp_dir = dirname($wpconfig);
+        $mu_dir = $wp_dir . '/wp-content/mu-plugins';
+
+        if (preg_match('#domains/([^/]+)/#', $wp_dir, $m)) {
+            $site = $m[1];
+        } else {
+            $site = basename($wp_dir);
+        }
+
+        if (!is_dir($mu_dir)) {
+            @mkdir($mu_dir, 0755, true);
+        }
+
+        $result = @file_put_contents($mu_dir . '/fix-poze-duplicate.php', $plugin);
+
+        if ($result !== false) {
+            echo "  ✓ $site\n";
+            $count++;
+        } else {
+            echo "  ✗ $site (nu am permisiuni)\n";
+        }
+    }
+}
+
+echo "\n=== Gata! $count site-uri fixate. ===\n";
+echo "\n⚠ STERGE ACEST FISIER DIN FILE MANAGER!\n";
 echo "</pre>";
