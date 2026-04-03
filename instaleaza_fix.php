@@ -62,16 +62,36 @@ $count = 0;
 
 // Caută toate instalările WordPress pe server
 // DirectAdmin: /home/USER/domains/DOMAIN/public_html/
-$pattern = '/home/*/domains/*/public_html/wp-config.php';
-$configs = glob($pattern);
+// Detectează automat calea pe baza locației acestui fișier
+// Exemplu: dacă fișierul e în /domains/botosaniexpres.ro/public_html/
+// atunci caută /domains/*/public_html/wp-config.php
+$current_dir = __DIR__;
+$base_path = '';
 
-if (empty($configs)) {
-    // Încearcă și alte căi comune
-    $configs = array_merge(
-        glob('/home/*/public_html/wp-config.php') ?: [],
-        glob('/home/*/www/wp-config.php') ?: [],
-        glob('/home/*/domains/*/public_html/wp-config.php') ?: []
-    );
+if (preg_match('#^(.*/domains)/[^/]+/public_html#', $current_dir, $m)) {
+    $base_path = $m[1];
+} elseif (preg_match('#^(/home/[^/]+)/domains/#', $current_dir, $m)) {
+    $base_path = $m[1] . '/domains';
+}
+
+echo "Cale detectată: $base_path\n\n";
+
+$configs = [];
+$patterns = [
+    "$base_path/*/public_html/wp-config.php",
+    '/home/*/domains/*/public_html/wp-config.php',
+    '/domains/*/public_html/wp-config.php',
+    '/home/*/public_html/wp-config.php',
+];
+
+foreach ($patterns as $pattern) {
+    $found = glob($pattern) ?: [];
+    if (!empty($found)) {
+        $configs = $found;
+        echo "Pattern folosit: $pattern\n";
+        echo "Site-uri găsite: " . count($configs) . "\n\n";
+        break;
+    }
 }
 
 if (empty($configs)) {
