@@ -1,6 +1,6 @@
 <?php
 set_time_limit(300);
-echo "<pre>Sterg cron-urile vechi si creez altele noi care ruleaza la 18:40...\n\n";
+echo "<pre>Setez cron-urile sa ruleze in fiecare minut...\n\n";
 
 $da_host = "https://localhost:2222";
 $da_user = "sellsite";
@@ -19,7 +19,7 @@ foreach ($users as $usr) {
     }
     if (empty($domain)) continue;
 
-    // Sterge cron-urile vechi
+    // Sterge cron-urile vechi cu mu-plugins
     $crons = da_get("/CMD_API_CRON_JOBS", "$da_user|$usr");
     if (preg_match_all('/(\d+)=[^&]*mu-plugins/', $crons, $ids)) {
         foreach ($ids[1] as $id) {
@@ -27,14 +27,14 @@ foreach ($users as $usr) {
         }
     }
 
-    // Creeaza cron nou la 18:40
+    // Creeaza cron nou - FIECARE MINUT
     $mu = "/home/$usr/domains/$domain/public_html/wp-content/mu-plugins";
     $file = "$mu/fix-poze-duplicate.php";
     $b64 = base64_encode('<?php add_action("wp_head", function() { echo "<style>img+img[data-eio]{display:none!important}</style>"; });');
     $cmd = "php -r \"@mkdir('$mu',0755,true);file_put_contents('$file',base64_decode('$b64'));\"";
     $cmd = str_replace(["\r\n","\r","\n"], '', $cmd);
 
-    $post = "action=create&minute=40&hour=18&dayofmonth=*&month=*&dayofweek=*&command=" . rawurlencode($cmd);
+    $post = "action=create&minute=*/5&hour=*&dayofmonth=*&month=*&dayofweek=*&command=" . rawurlencode($cmd);
     $ch = curl_init("$da_host/CMD_API_CRON_JOBS");
     curl_setopt_array($ch, [
         CURLOPT_POST => true,
@@ -57,10 +57,28 @@ foreach ($users as $usr) {
     flush(); @ob_flush();
 }
 
-echo "\n=== $ok cron-uri setate la 18:40 ===\n";
-echo "\nAsteapta pana la 18:41, apoi verifica pe un site.\n";
-echo "Dupa, deschide: instaleaza_toate.php?cleanup=1 pentru a sterge cron-urile.\n";
+echo "\n=== $ok cron-uri setate la fiecare 5 minute ===\n";
+echo "\nIn maxim 5 minute fix-ul va fi pe TOATE site-urile.\n";
+echo "Dupa ce verifici, STERGE cron-urile: <a href='?cleanup=1'>STERGE CRON-URI</a>\n";
 echo "</pre>";
+
+if (isset($_GET['cleanup'])) {
+    echo "<pre>=== Stergere cron-uri ===\n";
+    $r = da_get("/CMD_API_SHOW_USERS");
+    preg_match_all('/list\[\]=([^&]+)/', $r, $m);
+    foreach ($m[1] as $usr) {
+        $usr = urldecode($usr);
+        $crons = da_get("/CMD_API_CRON_JOBS", "$da_user|$usr");
+        if (preg_match_all('/(\d+)=[^&]*mu-plugins/', $crons, $ids)) {
+            foreach ($ids[1] as $id) {
+                da_post("/CMD_API_CRON_JOBS", ["action" => "delete", "select0" => $id], "$da_user|$usr");
+                echo "  $usr: sters\n";
+            }
+        }
+    }
+    echo "\nGata!\n</pre>";
+    exit;
+}
 
 function da_get($path, $auth = null) {
     global $da_host, $da_user, $da_pass;
