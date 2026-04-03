@@ -1,54 +1,39 @@
 <?php
-/**
- * Instalează fix-ul pe TOATE site-urile prin DirectAdmin API.
- * Rulează PE SERVER (localhost), nu de pe PC.
- *
- * 1. Uploadează pe un site prin File Manager
- * 2. Accesează în browser: https://site.ro/instaleaza_toate.php
- * 3. Gata! Șterge fișierul după.
- */
+set_time_limit(600);
 
-set_time_limit(300);
-
-// Credențiale reseller DirectAdmin
 $da_host = "https://localhost:2222";
 $da_user = "sellsite";
 $da_pass = "UiyeTD(5O54v[8";
 
 $plugin_code = '<?php
-/*
-Plugin Name: Fix Poze Duplicate
-Version: 4.0
-*/
 add_action("wp_head", function() {
-    echo \'<style>
-        img[data-eio-rwidth] + img[data-eio="l"],
-        img.lazyautosizes + img[data-eio="l"],
-        img.lazyloaded + img[data-eio="l"],
-        img.lazyload + img:not(.lazyload):not(.lazyautosizes):not(.lazyloaded),
-        img + img[data-eio="l"] {
-            display: none !important;
-        }
-    </style>\';
-});
-';
+    echo \'<style>img[data-eio-rwidth]+img[data-eio="l"],img.lazyautosizes+img[data-eio="l"],img.lazyloaded+img[data-eio="l"],img+img[data-eio="l"]{display:none!important}</style>\';
+});';
+
+// Escape pentru shell
+$plugin_escaped = str_replace("'", "'\\''", $plugin_code);
 
 echo "<pre>";
-echo "=== Instalare Fix Poze Duplicate pe TOATE site-urile ===\n\n";
+echo "=== Instalare Fix Poze Duplicate ===\n\n";
 
-// 1. Ia lista de useri
-$users = da_get("CMD_API_SHOW_USERS", $da_host, $da_user, $da_pass);
-if (empty($users)) {
-    die("Nu am gasit useri. Verifica credentialele.\n");
+// Ia userii
+$users = da_request("GET", "/CMD_API_SHOW_USERS", [], $da_host, $da_user, $da_pass);
+$user_list = [];
+foreach (explode("&", $users) as $part) {
+    if (strpos($part, "=") !== false) {
+        $val = urldecode(explode("=", $part, 2)[1]);
+        if (!empty($val)) $user_list[] = $val;
+    }
 }
-echo "Gasiti " . count($users) . " useri.\n\n";
+
+echo count($user_list) . " useri gasiti.\n\n";
 
 $ok = 0;
 $fail = 0;
 
-foreach ($users as $usr) {
-    // 2. Ia domeniul principal al userului
-    $config = da_get_raw("CMD_API_SHOW_USER_CONFIG&user=" . urlencode($usr), $da_host, $da_user, $da_pass);
+foreach ($user_list as $usr) {
+    // Ia domeniul
+    $config = da_request("GET", "/CMD_API_SHOW_USER_CONFIG?user=" . urlencode($usr), [], $da_host, $da_user, $da_pass);
     $domain = "";
     foreach (explode("&", $config) as $part) {
         if (strpos($part, "domain=") === 0) {
@@ -56,146 +41,111 @@ foreach ($users as $usr) {
             break;
         }
     }
-
     if (empty($domain)) continue;
 
-    // 3. Scrie fisierul direct pe disk (de pe server avem acces la /home/user/...)
-    $mu_dir = "/home/{$usr}/domains/{$domain}/public_html/wp-content/mu-plugins";
-    $wp_config = "/home/{$usr}/domains/{$domain}/public_html/wp-config.php";
+    $mu_path = "/home/{$usr}/domains/{$domain}/public_html/wp-content/mu-plugins";
+    $file_path = "{$mu_path}/fix-poze-duplicate.php";
 
-    // Verifica daca e WordPress
-    if (!file_exists($wp_config)) {
-        continue;
-    }
+    // Creeaza un cron job care scrie fisierul (ruleaza ca userul respectiv)
+    $cmd = "mkdir -p '{$mu_path}' && echo '{$plugin_escaped}' > '{$file_path}' && chmod 644 '{$file_path}'";
 
-    // Creaza mu-plugins
-    if (!is_dir($mu_dir)) {
-        @mkdir($mu_dir, 0755, true);
-    }
+    // Adauga cron job
+    $result = da_request("POST", "/CMD_API_CRON_JOBS", [
+        "action" => "create",
+        "minute" => "0",
+        "hour" => "0",
+        "dayofmonth" => "*",
+        "month" => "*",
+        "dayofweek" => "*",
+        "command" => $cmd,
+    ], $da_host, "{$da_user}|{$usr}", $da_pass);
 
-    // Incearca sa scrie direct
-    $written = @file_put_contents($mu_dir . "/fix-poze-duplicate.php", $plugin_code);
-
-    if ($written !== false) {
-        echo "  ✓ {$domain}\n";
-        $ok++;
-        continue;
-    }
-
-    // Daca nu merge direct, incearca prin DirectAdmin API (login-as)
-    $boundary = "----" . md5(time());
-    $file_content = "--{$boundary}\r\n";
-    $file_content .= "Content-Disposition: form-data; name=\"action\"\r\n\r\nsave\r\n";
-    $file_content .= "--{$boundary}\r\n";
-    $file_content .= "Content-Disposition: form-data; name=\"path\"\r\n\r\n/domains/{$domain}/public_html/wp-content/mu-plugins/fix-poze-duplicate.php\r\n";
-    $file_content .= "--{$boundary}\r\n";
-    $file_content .= "Content-Disposition: form-data; name=\"text\"\r\n\r\n{$plugin_code}\r\n";
-    $file_content .= "--{$boundary}--\r\n";
-
-    $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => "{$da_host}/CMD_FILE_MANAGER",
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $file_content,
-        CURLOPT_HTTPHEADER => ["Content-Type: multipart/form-data; boundary={$boundary}"],
-        CURLOPT_USERPWD => "{$da_user}|{$usr}:{$da_pass}",
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_SSL_VERIFYHOST => false,
-        CURLOPT_TIMEOUT => 15,
-    ]);
-    $response = curl_exec($ch);
-    curl_close($ch);
-
-    // Verifica daca a mers
-    if (file_exists($mu_dir . "/fix-poze-duplicate.php")) {
-        echo "  ✓ {$domain} (API)\n";
+    if (strpos($result, "error") === false || strpos($result, "error=0") !== false) {
+        echo "  ✓ {$domain} (cron creat)\n";
         $ok++;
     } else {
-        // Ultima incercare: upload fisier
-        $ch = curl_init();
-        $post = [
-            "action" => "upload",
-            "path" => "/domains/{$domain}/public_html/wp-content/mu-plugins",
-            "file" => new CURLFile(
-                __DIR__ . "/wp-content/mu-plugins/fix-poze-duplicate.php",
-                "application/x-php",
-                "fix-poze-duplicate.php"
-            ),
-        ];
-
-        // Creeaza fisier temporar pentru upload
-        $tmp = tempnam(sys_get_temp_dir(), "fix");
-        file_put_contents($tmp, $plugin_code);
-
-        $post["file"] = new CURLFile($tmp, "application/x-php", "fix-poze-duplicate.php");
-
-        curl_setopt_array($ch, [
-            CURLOPT_URL => "{$da_host}/CMD_FILE_MANAGER",
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $post,
-            CURLOPT_USERPWD => "{$da_user}|{$usr}:{$da_pass}",
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => false,
-            CURLOPT_TIMEOUT => 15,
-        ]);
-        curl_exec($ch);
-        curl_close($ch);
-        @unlink($tmp);
-
-        if (file_exists($mu_dir . "/fix-poze-duplicate.php")) {
-            echo "  ✓ {$domain} (upload)\n";
-            $ok++;
-        } else {
-            echo "  ✗ {$domain}\n";
-            $fail++;
-        }
+        echo "  ✗ {$domain}: {$result}\n";
+        $fail++;
     }
     flush();
 }
 
-echo "\n=== Gata! {$ok} instalate, {$fail} erori. ===\n";
-echo "\n⚠ STERGE ACEST FISIER DIN FILE MANAGER!\n";
+echo "\n=== {$ok} cron jobs create. ===\n";
+echo "\nCron-urile vor rula la miezul noptii si vor instala fix-ul.\n";
+echo "Dupa ce se instaleaza, ruleaza CURATA pentru a sterge cron-urile.\n";
+echo "\n<a href='?action=run_now'>▶ RULEAZA ACUM (nu astepta miezul noptii)</a>\n";
+echo "<a href='?action=cleanup'>🗑 CURATA cron-urile dupa instalare</a>\n";
 echo "</pre>";
 
-
-function da_get($cmd, $host, $user, $pass) {
-    $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => "{$host}/{$cmd}",
-        CURLOPT_USERPWD => "{$user}:{$pass}",
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_SSL_VERIFYHOST => false,
-        CURLOPT_TIMEOUT => 30,
-    ]);
-    $result = curl_exec($ch);
-    curl_close($ch);
-
-    $items = [];
-    foreach (explode("&", $result) as $part) {
-        if (strpos($part, "=") !== false) {
-            list($k, $v) = explode("=", $part, 2);
-            if (strpos($k, "list") !== false) {
-                $items[] = urldecode($v);
+// Ruleaza cron-urile imediat
+if (isset($_GET['action']) && $_GET['action'] === 'run_now') {
+    echo "<pre>\n=== Rulare imediata ===\n\n";
+    foreach ($user_list as $usr) {
+        $config = da_request("GET", "/CMD_API_SHOW_USER_CONFIG?user=" . urlencode($usr), [], $da_host, $da_user, $da_pass);
+        $domain = "";
+        foreach (explode("&", $config) as $part) {
+            if (strpos($part, "domain=") === 0) {
+                $domain = urldecode(substr($part, 7));
+                break;
             }
         }
+        if (empty($domain)) continue;
+
+        $mu_path = "/home/{$usr}/domains/{$domain}/public_html/wp-content/mu-plugins";
+        $file_path = "{$mu_path}/fix-poze-duplicate.php";
+
+        // Executa direct prin DirectAdmin CMD_API_CMD_EXEC sau prin cron force
+        $cmd = "mkdir -p '{$mu_path}' && echo '{$plugin_escaped}' > '{$file_path}' && chmod 644 '{$file_path}'";
+
+        // Incearca executie prin PHP ca acel user - nu merge, dar incercam altfel
+        // Forteaza rularea cron-ului
+        $result = da_request("POST", "/CMD_CRON_JOBS", [
+            "action" => "force",
+        ], $da_host, "{$da_user}|{$usr}", $da_pass);
+
+        echo "  {$domain}: trimis\n";
+        flush();
     }
-    return $items;
+    echo "\nGata! Asteapta 1-2 minute si verifica.\n</pre>";
 }
 
-function da_get_raw($cmd, $host, $user, $pass) {
+// Curata cron-urile
+if (isset($_GET['action']) && $_GET['action'] === 'cleanup') {
+    echo "<pre>\n=== Curatare cron-uri ===\n\n";
+    foreach ($user_list as $usr) {
+        // Ia lista de cron-uri
+        $crons = da_request("GET", "/CMD_API_CRON_JOBS", [], $da_host, "{$da_user}|{$usr}", $da_pass);
+        // Cauta si sterge cron-urile noastre
+        preg_match_all('/(\d+)=.*?mu-plugins/i', $crons, $matches);
+        foreach ($matches[1] as $id) {
+            da_request("POST", "/CMD_API_CRON_JOBS", [
+                "action" => "delete",
+                "select0" => $id,
+            ], $da_host, "{$da_user}|{$usr}", $da_pass);
+        }
+        echo "  {$usr}: curatat\n";
+        flush();
+    }
+    echo "\nGata!\n</pre>";
+}
+
+function da_request($method, $path, $data, $host, $user, $pass) {
     $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => "{$host}/{$cmd}",
-        CURLOPT_USERPWD => "{$user}:{$pass}",
+    $url = $host . $path;
+    $opts = [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_SSL_VERIFYPEER => false,
         CURLOPT_SSL_VERIFYHOST => false,
+        CURLOPT_USERPWD => "{$user}:{$pass}",
         CURLOPT_TIMEOUT => 30,
-    ]);
+    ];
+    if ($method === "POST") {
+        $opts[CURLOPT_POST] = true;
+        $opts[CURLOPT_POSTFIELDS] = http_build_query($data);
+    }
+    $opts[CURLOPT_URL] = $url;
+    curl_setopt_array($ch, $opts);
     $result = curl_exec($ch);
     curl_close($ch);
-    return $result;
+    return $result ?: "";
 }
